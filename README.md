@@ -11,6 +11,14 @@ This is the database half of the
 so that it can be used on its own. It has been running in production there; this
 repository is the setup with the application removed and an example table in its place.
 
+![ClickHouse across three availability zones: your application, or a kubectl port-forward, writes to either of two ClickHouse replicas in zones a and b, each with a hot and a warm disk, and every replica keeps a session with all three Keeper nodes in zones a, b and c, which form the quorum](architecture.svg)
+
+The two replicas hold every table and copy new parts to each other, so a client can
+write to either. The dotted lines are the sessions each replica keeps with all three
+Keepers, which agree among themselves over Raft on what the table contains. Losing any
+one zone leaves one replica and two Keepers, which is enough to keep both reading and
+writing.
+
 ## What you get
 
 Two ClickHouse servers, `clickhouse-0` and `clickhouse-1`, forming one shard of a cluster
