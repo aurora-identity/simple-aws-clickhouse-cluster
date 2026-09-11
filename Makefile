@@ -66,6 +66,12 @@ STACK_NAME ?= clickhouse
 CHANGE_SET := $(STACK_NAME)-plan
 BOOTSTRAP_STACK := $(STACK_NAME)-role
 
+# Who may reach the Kubernetes API from the internet. Your current address unless .env says
+# otherwise. Note the escaped comma: CloudFormation splits the list on commas itself.
+comma := ,
+API_ALLOWED_CIDRS ?= $(shell curl -s https://checkip.amazonaws.com)/32
+API_CIDRS_PARAM := $(subst $(comma),\\$(comma),$(API_ALLOWED_CIDRS))
+
 DEPLOY_ROLE_ARN = $(shell aws cloudformation describe-stacks \
 	--stack-name $(BOOTSTRAP_STACK) --region $(AWS_REGION) \
 	--query "Stacks[0].Outputs[?OutputKey=='DeploymentRoleArn'].OutputValue" \
@@ -93,6 +99,7 @@ aws-plan: aws-bootstrap
 		--template-body file://aws/cloudformation/clickhouse-stack.yaml \
 		--role-arn $$role \
 		--parameters ParameterKey=EksClusterName,ParameterValue=$(STACK_NAME) \
+		             ParameterKey=ApiAllowedCidrs,ParameterValue="$(API_CIDRS_PARAM)" \
 		--capabilities CAPABILITY_NAMED_IAM; \
 	aws cloudformation wait change-set-create-complete --region $(AWS_REGION) --stack-name $(STACK_NAME) --change-set-name $(CHANGE_SET); \
 	aws cloudformation describe-change-set --region $(AWS_REGION) --stack-name $(STACK_NAME) --change-set-name $(CHANGE_SET)

@@ -38,6 +38,11 @@ Parameters:
     Type: String
     Default: AL2023_x86_64_STANDARD
     Description: EKS managed node group AMI type.
+  ApiAllowedCidrs:
+    Type: CommaDelimitedList
+    Description: >-
+      Address ranges allowed to reach the Kubernetes API from the internet. The Makefile
+      passes your current public address; widen it if you work from more than one place.
 
 Resources:
   Vpc:
@@ -420,6 +425,7 @@ Resources:
           - !Ref PrivateSubnetC
         EndpointPrivateAccess: true
         EndpointPublicAccess: true
+        PublicAccessCidrs: !Ref ApiAllowedCidrs
 
   # Two replicas across two zones. The nodes are tainted so nothing else lands on them.
   ClickhouseNodeGroup:
