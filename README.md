@@ -22,9 +22,7 @@ Three ClickHouse Keeper nodes. Keeper is the coordination service that Replicate
 needs to agree on which parts exist and who inserted what. Three nodes is the smallest
 number that can hold a quorum, which means the cluster keeps accepting writes while any
 one of them is down. With one replica and one Keeper down at the same time it still
-works; with two Keepers down it goes read-only until one comes back, and that is the
-right behaviour, because a Keeper that cannot form a majority must not pretend to know
-the truth.
+works; with two Keepers down it goes read-only until one comes back.
 
 Two tiers of disk. Every table that uses the `hot_warm` storage policy starts on the hot
 disk and, when its own TTL says so, is moved to the warm one and later deleted. The
@@ -38,7 +36,7 @@ above. It is there to be replaced.
 `kubernetes/clickhouse.yaml` is the cluster: two StatefulSets, their headless Services,
 and the storage they use. Each pod is pinned to a node labelled for it, `role=clickhouse`
 or `role=keeper`, and an anti-affinity rule on the zone label keeps two replicas out of
-the same zone and two Keepers likewise. Those labels are the whole contract between the
+the same zone and two Keepers likewise. Those labels are the contract between the
 manifest and the cluster underneath it. On AWS, CloudFormation puts them on the nodes. On
 your laptop, `kubernetes/kind.yaml` does.
 
@@ -125,12 +123,15 @@ the TTL syntax that moves and then deletes. `make schema` runs anything new.
 
 **The `default` user has no password.** Anything that can reach port 8123 or 9000 can read
 and write every table. That is fine for a laptop and for a cluster that runs nothing
-else. `aws/README.md` says what to add when it is not.
+else. The moment it is not, the "Hardening for your environment" section of
+`aws/README.md` lists what to do, starting with that password. Those steps are left to
+you on purpose, because each depends on what else lives next to the database.
 
 **Storage on AWS is a directory on each node's own disk.** If a node is replaced, its
 replica comes back empty and has to be told to refetch from the other one. The two
-commands are in `aws/deploy.md`. The EBS CSI driver is the conventional alternative and is
-not in this repository.
+commands are in `aws/deploy.md`. The conventional alternative is the
+[Amazon EBS CSI driver](https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html),
+which gives each pod its own EBS volume that follows it to a new node.
 
 **The warm tier on AWS is on the same disk as the hot one.** The mechanism is real and the
 parts do move, but nothing gets cheaper until you mount a second, slower volume at the
@@ -139,13 +140,13 @@ warm path.
 **There are no backups and no monitoring.** Nothing ships to S3 and nothing alerts. The
 `system.replicas` table and Keeper's `mntr` command are what you have.
 
-**Nothing reaches the cluster from the internet.** That is deliberate. A load balancer,
-TLS and client authentication are yours to add.
+**Nothing reaches the cluster from the internet.** You will need to
+add a load balancer, TLS and client authentication before anything outside the VPC can
+talk to it.
 
 ## Where this departs from the deployment it came from
 
-This is an extraction, not a rewrite, but four things did change on the way, and they are
-worth knowing about if you are comparing the two.
+This is an extraction, not a rewrite, but four things did change on the way:
 
 The original mounted its volume at `/var/lib/clickhouse/default` and left
 `/var/lib/clickhouse` itself, where ClickHouse keeps table metadata, on the container's
@@ -157,10 +158,6 @@ two tiers were one directory with two names. Here they are two directories.
 The original had nothing preventing both replicas from being scheduled onto the same
 node. Here a pod anti-affinity rule on the zone makes the multi-zone claim a guarantee
 rather than a likely outcome.
-
-The original baked the schema into a custom ClickHouse image and ran it from the image's
-init hook. Here the images are the unmodified official ones and the schema is applied by
-a small script run as a Job.
 
 ## Getting in touch
 
