@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  The role CloudFormation assumes to build the ClickHouse stack, and that you assume to
+  reach the cluster with kubectl. Whoever creates an EKS cluster is its first
+  administrator, so the same role has to do both.
+
+Parameters:
+  TrustedUserArn:
+    Type: String
+    Description: The IAM user or role allowed to assume this role.
+  DeploymentRoleName:
+    Type: String
+    Default: clickhouse-cloudformation-deployment-role
+    Description: Name for the deployment role.
+
+Resources:
+  CloudFormationDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref DeploymentRoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              AWS: !Ref TrustedUserArn
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: networking
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - ec2:CreateVpc
+                  - ec2:DeleteVpc
+                  - ec2:ModifyVpcAttribute
+                  - ec2:CreateSubnet
+                  - ec2:DeleteSubnet
+                  - ec2:ModifySubnetAttribute
+                  - ec2:CreateInternetGateway
+                  - ec2:AttachInternetGateway
+                  - ec2:DetachInternetGateway
+                  - ec2:DeleteInternetGateway
+                  - ec2:AllocateAddress
+                  - ec2:ReleaseAddress
+                  - ec2:CreateNatGateway
+                  - ec2:DeleteNatGateway
+                  - ec2:CreateRouteTable
+                  - ec2:DeleteRouteTable
+                  - ec2:AssociateRouteTable
+                  - ec2:DisassociateRouteTable
+                  - ec2:CreateRoute
+                  - ec2:DeleteRoute
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:CreateLaunchTemplate
+                  - ec2:CreateLaunchTemplateVersion
+                  - ec2:ModifyLaunchTemplate
+                  - ec2:DeleteLaunchTemplate
+                  - ec2:DeleteLaunchTemplateVersions
+                  - ec2:RunInstances
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: "*"
+        - PolicyName: eks
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:Describe*
+                  - eks:List*
+                  - eks:CreateCluster
+                  - eks:DeleteCluster
+                  - eks:UpdateClusterConfig
+                  - eks:UpdateClusterVersion
+                  - eks:CreateNodegroup
+                  - eks:DeleteNodegroup
+                  - eks:UpdateNodegroupConfig
+                  - eks:UpdateNodegroupVersion
+                  - eks:TagResource
+                  - eks:UntagResource
+                  - eks:AccessKubernetesApi
+                Resource: "*"
+        - PolicyName: iam
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageStackRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:ListAttachedRolePolicies
+                Resource:
+                  - arn:aws:iam::*:role/*-eks-cluster-role
+                  - arn:aws:iam::*:role/*-eks-node-role
+              - Sid: PassClusterRoleToEks
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: arn:aws:iam::*:role/*-eks-cluster-role
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: eks.amazonaws.com
+              - Sid: PassNodeRoleToEc2AndEks
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: arn:aws:iam::*:role/*-eks-node-role
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - ec2.amazonaws.com
+                      - eks.amazonaws.com
+              - Sid: ServiceLinkedRoles
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource:
+                  - arn:aws:iam::*:role/aws-service-role/eks.amazonaws.com/AWSServiceRoleForAmazonEKS
+                  - arn:aws:iam::*:role/aws-service-role/ec2.amazonaws.com/AWSServiceRoleForEC2
+                  - arn:aws:iam::*:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - eks.amazonaws.com
+                      - ec2.amazonaws.com
+                      - eks-nodegroup.amazonaws.com
+
+Outputs:
+  DeploymentRoleArn:
+    Description: ARN of the deployment role.
+    Value: !GetAtt CloudFormationDeploymentRole.Arn

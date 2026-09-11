@@ -1,0 +1,32 @@
+<!--
+  Two users.
+
+  "admin" can manage access and is reachable only from inside the server's own container,
+  so the password is worth nothing to somebody who does not already have a shell there.
+  The hash below is for the password "change-me". Generate your own with
+      printf '%s' 'your-password' | shasum -a 256 | cut -d' ' -f1
+  and put it in place of the value before you deploy anywhere that matters.
+
+  "default" is the account clients use. It has no password and no network restriction, so
+  anything that can reach port 8123 or 9000 can read and write every table. That is fine
+  for a local stack and for a cluster that runs nothing else; the README says what to do
+  when it is not.
+-->
+<clickhouse>
+  <users>
+    <admin>
+      <password_sha256_hex>e2186dbdb1bb4193608605e84f33208765b5693b55edd4f730a719a100eeea6f</password_sha256_hex>
+      <networks>
+        <ip>127.0.0.1</ip>
+        <ip>::1</ip>
+      </networks>
+      <profile>default</profile>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </admin>
+    <default>
+      <profile>default</profile>
+      <quota>default</quota>
+    </default>
+  </users>
+</clickhouse>

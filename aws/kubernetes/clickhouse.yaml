@@ -1,0 +1,322 @@
+# Two ClickHouse replicas and three Keeper nodes, each pinned to its own availability zone.
+#
+# The config files are not in here. `make deploy` builds three ConfigMaps from the same
+# config/ directory that docker-compose uses, then applies this file. The images are the
+# official ones from Docker Hub, the same tags docker-compose runs.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clickhouse
+---
+# Headless services give every pod a stable DNS name, which is what the cluster config
+# refers to. publishNotReadyAddresses matters: a replica has to be resolvable before it
+# is ready, or the replicas could never find each other on first start.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: clickhouse
+  labels:
+    app: clickhouse
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: clickhouse
+  ports:
+    - { name: http, port: 8123 }
+    - { name: native, port: 9000 }
+    - { name: interserver, port: 9009 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keeper
+  namespace: clickhouse
+  labels:
+    app: keeper
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: keeper
+  ports:
+    - { name: client, port: 9181 }
+    - { name: raft, port: 9234 }
+---
+# Storage is a directory on each node's own disk, declared by hand. Nothing is provisioned
+# dynamically. aws/README.md explains what that means when a node is replaced.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: node-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clickhouse-hot-0
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: hot-clickhouse-0 }
+  hostPath: { path: /var/lib/clickhouse, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [clickhouse] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clickhouse-hot-1
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: hot-clickhouse-1 }
+  hostPath: { path: /var/lib/clickhouse, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [clickhouse] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clickhouse-warm-0
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: warm-clickhouse-0 }
+  hostPath: { path: /var/lib/clickhouse-warm, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [clickhouse] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: clickhouse-warm-1
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: warm-clickhouse-1 }
+  hostPath: { path: /var/lib/clickhouse-warm, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [clickhouse] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: keeper-0
+spec:
+  capacity: { storage: 10Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: data-keeper-0 }
+  hostPath: { path: /var/lib/clickhouse-keeper, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [keeper] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: keeper-1
+spec:
+  capacity: { storage: 10Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: data-keeper-1 }
+  hostPath: { path: /var/lib/clickhouse-keeper, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [keeper] }]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: keeper-2
+spec:
+  capacity: { storage: 10Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: node-local
+  claimRef: { namespace: clickhouse, name: data-keeper-2 }
+  hostPath: { path: /var/lib/clickhouse-keeper, type: DirectoryOrCreate }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions: [{ key: role, operator: In, values: [keeper] }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keeper
+  namespace: clickhouse
+spec:
+  serviceName: keeper
+  replicas: 3
+  selector:
+    matchLabels:
+      app: keeper
+  template:
+    metadata:
+      labels:
+        app: keeper
+    spec:
+      nodeSelector:
+        role: keeper
+      # One Keeper per availability zone, so losing a zone loses one vote, not two.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  app: keeper
+      containers:
+        - name: keeper
+          image: clickhouse/clickhouse-keeper:25.10-alpine
+          imagePullPolicy: IfNotPresent
+          # Keeper ids are 1-based and pod ordinals are 0-based; keeper-0 is id 1.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export KEEPER_ID=$(( ${HOSTNAME##*-} + 1 ))
+              echo "starting keeper with KEEPER_ID=${KEEPER_ID}"
+              exec clickhouse-keeper --config-file=/etc/clickhouse-keeper/keeper_config.xml
+          ports:
+            - { name: client, containerPort: 9181 }
+            - { name: raft, containerPort: 9234 }
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - { name: CH_KEEPER_0_HOST, value: keeper-0.keeper.clickhouse.svc.cluster.local }
+            - { name: CH_KEEPER_1_HOST, value: keeper-1.keeper.clickhouse.svc.cluster.local }
+            - { name: CH_KEEPER_2_HOST, value: keeper-2.keeper.clickhouse.svc.cluster.local }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-keeper/keeper_config.xml
+              subPath: keeper_config.xml
+            - name: data
+              mountPath: /var/lib/clickhouse-keeper
+      volumes:
+        - name: config
+          configMap:
+            name: keeper-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: node-local
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: clickhouse
+spec:
+  serviceName: clickhouse
+  replicas: 2
+  selector:
+    matchLabels:
+      app: clickhouse
+  template:
+    metadata:
+      labels:
+        app: clickhouse
+    spec:
+      nodeSelector:
+        role: clickhouse
+      tolerations:
+        - { key: dedicated, operator: Equal, value: clickhouse, effect: NoSchedule }
+      # One replica per availability zone. This is the line that makes it multi-AZ.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  app: clickhouse
+      containers:
+        - name: clickhouse
+          image: clickhouse/clickhouse-server:25.10
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8123 }
+            - { name: native, containerPort: 9000 }
+            - { name: interserver, containerPort: 9009 }
+          env:
+            - { name: CH_SHARD, value: "1" }
+            - name: CH_REPLICA
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - { name: CH_REPLICA_0_HOST, value: clickhouse-0.clickhouse.clickhouse.svc.cluster.local }
+            - { name: CH_REPLICA_1_HOST, value: clickhouse-1.clickhouse.clickhouse.svc.cluster.local }
+            - { name: CH_KEEPER_0_HOST, value: keeper-0.keeper.clickhouse.svc.cluster.local }
+            - { name: CH_KEEPER_1_HOST, value: keeper-1.keeper.clickhouse.svc.cluster.local }
+            - { name: CH_KEEPER_2_HOST, value: keeper-2.keeper.clickhouse.svc.cluster.local }
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d
+            - name: users
+              mountPath: /etc/clickhouse-server/users.d
+            - name: hot
+              mountPath: /var/lib/clickhouse
+            - name: warm
+              mountPath: /var/lib/clickhouse-warm
+      volumes:
+        - name: config
+          configMap:
+            name: clickhouse-config
+        - name: users
+          configMap:
+            name: clickhouse-users
+  volumeClaimTemplates:
+    - metadata:
+        name: hot
+      spec:
+        storageClassName: node-local
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 100Gi
+    - metadata:
+        name: warm
+      spec:
+        storageClassName: node-local
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 100Gi

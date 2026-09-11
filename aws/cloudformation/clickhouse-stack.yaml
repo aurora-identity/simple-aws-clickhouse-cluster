@@ -1,0 +1,474 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  A VPC with three private subnets across three availability zones, an EKS cluster, and
+  two node groups for ClickHouse: one for the data replicas and one for the Keeper quorum.
+  The nodes have no public addresses; a single NAT gateway gives them the way out they
+  need to pull the official ClickHouse images.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the VPC.
+  PrivateSubnetCidrs:
+    Type: CommaDelimitedList
+    Default: 10.0.0.0/19,10.0.32.0/19,10.0.64.0/19
+    Description: CIDR blocks for three private subnets, one per availability zone.
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.0.96.0/24
+    Description: CIDR block for the one public subnet that holds the NAT gateway.
+  EksClusterName:
+    Type: String
+    Default: clickhouse
+    Description: Name of the EKS cluster.
+  EksVersion:
+    Type: String
+    Default: '1.35'
+    Description: Kubernetes version for the EKS control plane.
+  ClickhouseInstanceType:
+    Type: String
+    Default: m6i.large
+    Description: Instance type for the nodes that run the ClickHouse replicas.
+  KeeperInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: Instance type for the nodes that run ClickHouse Keeper.
+  NodeAmiType:
+    Type: String
+    Default: AL2023_x86_64_STANDARD
+    Description: EKS managed node group AMI type.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [0, !Ref PrivateSubnetCidrs]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-a"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [1, !Ref PrivateSubnetCidrs]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-b"
+
+  PrivateSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Select [2, !Ref PrivateSubnetCidrs]
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-c"
+
+  # One public subnet, holding only the NAT gateway. Nothing of ours runs in it. This is
+  # the single route from the nodes to the internet, and image pulls are what use it.
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-rt"
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  NatGatewayAddress:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayAddress.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat"
+
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt-a"
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt-b"
+
+  PrivateRouteTableC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-rt-c"
+
+  PrivateRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      SubnetId: !Ref PrivateSubnetA
+
+  PrivateRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      SubnetId: !Ref PrivateSubnetB
+
+  PrivateRouteTableAssociationC:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      SubnetId: !Ref PrivateSubnetC
+
+  PrivateDefaultRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateDefaultRouteB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateDefaultRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # Security groups. The control plane group is attached to the EKS cluster; the
+  # ClickHouse group is attached to every node, data and Keeper alike, so all of the
+  # cluster's own traffic is covered by the one intra-group rule below.
+
+  EksControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EKS control plane.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref VpcCidr, Description: "Nodes to the EKS API server" }
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0, Description: "All outbound" }
+
+  ClickhouseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ClickHouse data and Keeper nodes.
+      VpcId: !Ref Vpc
+      Tags:
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 8123, ToPort: 8123, CidrIp: !Ref VpcCidr, Description: "ClickHouse HTTP" }
+        - { IpProtocol: tcp, FromPort: 9000, ToPort: 9000, CidrIp: !Ref VpcCidr, Description: "ClickHouse native" }
+        - { IpProtocol: tcp, FromPort: 9009, ToPort: 9009, CidrIp: !Ref VpcCidr, Description: "ClickHouse replication" }
+        - { IpProtocol: tcp, FromPort: 9181, ToPort: 9181, CidrIp: !Ref VpcCidr, Description: "Keeper client" }
+        - { IpProtocol: tcp, FromPort: 9234, ToPort: 9234, CidrIp: !Ref VpcCidr, Description: "Keeper Raft" }
+
+  ClickhouseIntraGroupTraffic:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Nodes talk to each other freely, which covers replication, Keeper and DNS.
+      GroupId: !Ref ClickhouseSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref ClickhouseSecurityGroup
+
+  ControlPlaneToNodesHttps:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Control plane to node webhooks and metrics.
+      GroupId: !Ref ClickhouseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref EksControlPlaneSecurityGroup
+
+  ControlPlaneToKubelet:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Control plane to kubelet, for logs and exec.
+      GroupId: !Ref ClickhouseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 10250
+      ToPort: 10250
+      SourceSecurityGroupId: !Ref EksControlPlaneSecurityGroup
+
+  ControlPlaneToDns:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Control plane to CoreDNS.
+      GroupId: !Ref ClickhouseSecurityGroup
+      IpProtocol: tcp
+      FromPort: 53
+      ToPort: 53
+      SourceSecurityGroupId: !Ref EksControlPlaneSecurityGroup
+
+  NodesToControlPlane:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Nodes to the EKS API server.
+      GroupId: !Ref EksControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref ClickhouseSecurityGroup
+
+  # Launch templates. The user data is the nodeadm config that joins the node to the
+  # cluster; 172.20.0.0/16 is the service CIDR EKS picks for a VPC in 10.0.0.0/8.
+
+  ClickhouseNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 2
+          HttpTokens: required
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 200
+              VolumeType: gp3
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-clickhouse"
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref ClickhouseSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+            --BOUNDARY
+            Content-Type: application/node.eks.aws
+
+            ---
+            apiVersion: node.eks.aws/v1alpha1
+            kind: NodeConfig
+            spec:
+              cluster:
+                name: ${EksCluster}
+                apiServerEndpoint: ${EksCluster.Endpoint}
+                certificateAuthority: ${EksCluster.CertificateAuthorityData}
+                cidr: 172.20.0.0/16
+
+            --BOUNDARY--
+
+  KeeperNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpPutResponseHopLimit: 2
+          HttpTokens: required
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp3
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-keeper"
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            Groups:
+              - !Ref ClickhouseSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="BOUNDARY"
+
+            --BOUNDARY
+            Content-Type: application/node.eks.aws
+
+            ---
+            apiVersion: node.eks.aws/v1alpha1
+            kind: NodeConfig
+            spec:
+              cluster:
+                name: ${EksCluster}
+                apiServerEndpoint: ${EksCluster.Endpoint}
+                certificateAuthority: ${EksCluster.CertificateAuthorityData}
+                cidr: 172.20.0.0/16
+
+            --BOUNDARY--
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-eks-cluster-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-eks-node-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref EksClusterName
+      RoleArn: !GetAtt EksClusterRole.Arn
+      Version: !Ref EksVersion
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref EksControlPlaneSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PrivateSubnetC
+        EndpointPrivateAccess: true
+        EndpointPublicAccess: true
+
+  # Two replicas across two zones. The nodes are tainted so nothing else lands on them.
+  ClickhouseNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodeRole: !GetAtt EksNodeRole.Arn
+      AmiType: !Ref NodeAmiType
+      LaunchTemplate:
+        Id: !Ref ClickhouseNodeLaunchTemplate
+        Version: !GetAtt ClickhouseNodeLaunchTemplate.LatestVersionNumber
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+        - !Ref PrivateSubnetC
+      ScalingConfig:
+        MinSize: 2
+        DesiredSize: 2
+        MaxSize: 2
+      Labels:
+        role: clickhouse
+      Taints:
+        - Key: dedicated
+          Value: clickhouse
+          Effect: NO_SCHEDULE
+      InstanceTypes:
+        - !Ref ClickhouseInstanceType
+      CapacityType: ON_DEMAND
+
+  # Three Keeper nodes across three zones. These are not tainted: CoreDNS and the schema
+  # job have to run somewhere, and the Keeper nodes have room.
+  KeeperNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodeRole: !GetAtt EksNodeRole.Arn
+      AmiType: !Ref NodeAmiType
+      LaunchTemplate:
+        Id: !Ref KeeperNodeLaunchTemplate
+        Version: !GetAtt KeeperNodeLaunchTemplate.LatestVersionNumber
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+        - !Ref PrivateSubnetC
+      ScalingConfig:
+        MinSize: 3
+        DesiredSize: 3
+        MaxSize: 3
+      Labels:
+        role: keeper
+      InstanceTypes:
+        - !Ref KeeperInstanceType
+      CapacityType: ON_DEMAND

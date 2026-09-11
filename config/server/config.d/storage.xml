@@ -1,0 +1,29 @@
+<!--
+  Two tiers of storage. "hot" is the server's default disk at /var/lib/clickhouse, which is
+  also where table metadata lives. "warm" is a second disk at /var/lib/clickhouse-warm.
+
+  Parts move from hot to warm because a table's TTL says so; see schema/001-create-tables.sql.
+  move_factor is the safety valve that also moves parts when the hot disk runs low on space.
+-->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <warm>
+        <path>/var/lib/clickhouse-warm/</path>
+      </warm>
+    </disks>
+    <policies>
+      <hot_warm>
+        <volumes>
+          <hot>
+            <disk>default</disk>
+          </hot>
+          <warm>
+            <disk>warm</disk>
+          </warm>
+        </volumes>
+        <move_factor>0.1</move_factor>
+      </hot_warm>
+    </policies>
+  </storage_configuration>
+</clickhouse>

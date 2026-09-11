@@ -1,0 +1,53 @@
+<!--
+  ClickHouse Keeper: three nodes, one Raft group. Three is the smallest number that can
+  hold a quorum, which means the cluster keeps working while any one node is down.
+
+  Hostnames come from the environment, as they do for the server, so this file is the same
+  under docker-compose and Kubernetes.
+
+    KEEPER_ID          this node's id, 1, 2 or 3, matching the raft_configuration below
+    CH_KEEPER_0_HOST   hostname of node id 1, and so on
+-->
+<clickhouse>
+  <!-- Listen on both address families and tolerate one being absent, as the Docker image does. -->
+  <listen_host>::</listen_host>
+  <listen_host>0.0.0.0</listen_host>
+  <listen_try>1</listen_try>
+
+  <logger>
+    <level>information</level>
+    <console>1</console>
+  </logger>
+
+  <keeper_server>
+    <tcp_port>9181</tcp_port>
+    <server_id from_env="KEEPER_ID" />
+
+    <log_storage_path>/var/lib/clickhouse-keeper/coordination/log</log_storage_path>
+    <snapshot_storage_path>/var/lib/clickhouse-keeper/coordination/snapshots</snapshot_storage_path>
+
+    <coordination_settings>
+      <operation_timeout_ms>10000</operation_timeout_ms>
+      <session_timeout_ms>30000</session_timeout_ms>
+      <raft_logs_level>information</raft_logs_level>
+    </coordination_settings>
+
+    <raft_configuration>
+      <server>
+        <id>1</id>
+        <hostname from_env="CH_KEEPER_0_HOST" />
+        <port>9234</port>
+      </server>
+      <server>
+        <id>2</id>
+        <hostname from_env="CH_KEEPER_1_HOST" />
+        <port>9234</port>
+      </server>
+      <server>
+        <id>3</id>
+        <hostname from_env="CH_KEEPER_2_HOST" />
+        <port>9234</port>
+      </server>
+    </raft_configuration>
+  </keeper_server>
+</clickhouse>

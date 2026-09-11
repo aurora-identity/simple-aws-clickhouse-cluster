@@ -1,0 +1,61 @@
+<!--
+  Cluster membership for a ClickHouse server: one shard, two replicas, three Keeper nodes.
+
+  Every hostname is read from an environment variable so that this one file serves both
+  docker-compose, where the hosts are service names, and Kubernetes, where they are the
+  StatefulSet pod DNS names. The server refuses to start if any of them is unset.
+
+    CH_SHARD           the shard this server belongs to, "1" for a single-shard cluster
+    CH_REPLICA         a name unique to this server, used in the ReplicatedMergeTree path
+    CH_REPLICA_0_HOST  hostname of replica 0
+    CH_REPLICA_1_HOST  hostname of replica 1
+    CH_KEEPER_0_HOST   hostname of Keeper node 0, and so on for 1 and 2
+-->
+<clickhouse>
+  <!-- Listen on both address families and tolerate one being absent, as the Docker image does. -->
+  <listen_host>::</listen_host>
+  <listen_host>0.0.0.0</listen_host>
+  <listen_try>1</listen_try>
+
+  <logger>
+    <level>information</level>
+    <console>1</console>
+  </logger>
+
+  <macros>
+    <cluster>main</cluster>
+    <shard from_env="CH_SHARD" />
+    <replica from_env="CH_REPLICA" />
+  </macros>
+
+  <remote_servers replace="true">
+    <main>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica>
+          <host from_env="CH_REPLICA_0_HOST" />
+          <port>9000</port>
+        </replica>
+        <replica>
+          <host from_env="CH_REPLICA_1_HOST" />
+          <port>9000</port>
+        </replica>
+      </shard>
+    </main>
+  </remote_servers>
+
+  <zookeeper>
+    <node>
+      <host from_env="CH_KEEPER_0_HOST" />
+      <port>9181</port>
+    </node>
+    <node>
+      <host from_env="CH_KEEPER_1_HOST" />
+      <port>9181</port>
+    </node>
+    <node>
+      <host from_env="CH_KEEPER_2_HOST" />
+      <port>9181</port>
+    </node>
+  </zookeeper>
+</clickhouse>
