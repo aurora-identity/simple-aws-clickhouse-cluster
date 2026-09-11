@@ -293,7 +293,7 @@ Resources:
       LaunchTemplateData:
         MetadataOptions:
           HttpEndpoint: enabled
-          HttpPutResponseHopLimit: 2
+          HttpPutResponseHopLimit: 1
           HttpTokens: required
         BlockDeviceMappings:
           - DeviceName: /dev/xvda
@@ -335,7 +335,7 @@ Resources:
       LaunchTemplateData:
         MetadataOptions:
           HttpEndpoint: enabled
-          HttpPutResponseHopLimit: 2
+          HttpPutResponseHopLimit: 1
           HttpTokens: required
         BlockDeviceMappings:
           - DeviceName: /dev/xvda
