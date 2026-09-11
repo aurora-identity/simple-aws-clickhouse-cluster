@@ -127,6 +127,13 @@ Resources:
                     iam:PassedToService:
                       - ec2.amazonaws.com
                       - eks.amazonaws.com
+              - Sid: ReadServiceLinkedRoles
+                Effect: Allow
+                Action: iam:GetRole
+                Resource:
+                  - arn:aws:iam::*:role/aws-service-role/eks.amazonaws.com/AWSServiceRoleForAmazonEKS
+                  - arn:aws:iam::*:role/aws-service-role/ec2.amazonaws.com/AWSServiceRoleForEC2
+                  - arn:aws:iam::*:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup
               - Sid: ServiceLinkedRoles
                 Effect: Allow
                 Action: iam:CreateServiceLinkedRole

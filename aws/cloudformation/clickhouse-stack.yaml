@@ -229,7 +229,6 @@ Resources:
     Properties:
       GroupDescription: ClickHouse data and Keeper nodes.
       VpcId: !Ref Vpc
-      Tags:
       SecurityGroupIngress:
         - { IpProtocol: tcp, FromPort: 8123, ToPort: 8123, CidrIp: !Ref VpcCidr, Description: "ClickHouse HTTP" }
         - { IpProtocol: tcp, FromPort: 9000, ToPort: 9000, CidrIp: !Ref VpcCidr, Description: "ClickHouse native" }

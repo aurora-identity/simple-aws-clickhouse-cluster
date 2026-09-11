@@ -100,8 +100,10 @@ aws-plan: aws-bootstrap
 aws-apply:
 	aws cloudformation execute-change-set --region $(AWS_REGION) --stack-name $(STACK_NAME) --change-set-name $(CHANGE_SET)
 	@echo "Waiting for the stack. EKS takes ten to fifteen minutes."
-	aws cloudformation wait stack-create-complete --region $(AWS_REGION) --stack-name $(STACK_NAME) 2>/dev/null || \
-	aws cloudformation wait stack-update-complete --region $(AWS_REGION) --stack-name $(STACK_NAME)
+	@status=$$(aws cloudformation describe-stacks --region $(AWS_REGION) --stack-name $(STACK_NAME) --query 'Stacks[0].StackStatus' --output text); \
+	case "$$status" in CREATE_*|REVIEW_IN_PROGRESS) waiter=stack-create-complete;; *) waiter=stack-update-complete;; esac; \
+	aws cloudformation wait $$waiter --region $(AWS_REGION) --stack-name $(STACK_NAME) || \
+	{ echo "Stack failed. The reason is in:"; echo "  aws cloudformation describe-stack-events --region $(AWS_REGION) --stack-name $(STACK_NAME) --query 'StackEvents[?ResourceStatus==\`CREATE_FAILED\`].[LogicalResourceId,ResourceStatusReason]' --output table"; exit 1; }
 
 aws-kube:
 	aws eks update-kubeconfig --region $(AWS_REGION) --name $(STACK_NAME) --role-arn $(DEPLOY_ROLE_ARN)
