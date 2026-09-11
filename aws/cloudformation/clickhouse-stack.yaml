@@ -300,6 +300,7 @@ Resources:
             Ebs:
               VolumeSize: 200
               VolumeType: gp3
+              Encrypted: true
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -342,6 +343,7 @@ Resources:
             Ebs:
               VolumeSize: 20
               VolumeType: gp3
+              Encrypted: true
         TagSpecifications:
           - ResourceType: instance
             Tags:
