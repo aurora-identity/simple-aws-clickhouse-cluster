@@ -4,6 +4,10 @@ Everything here runs from the root of the repository. You need the AWS CLI signe
 an identity that can create IAM roles, and `kubectl`. Copy `.env.example` to `.env` and
 set your region.
 
+The Kubernetes API will accept connections only from the public address you run
+`make aws-plan` from. If you will use `kubectl` from somewhere else too, set
+`API_ALLOWED_CIDRS` in `.env` to the full list before you plan.
+
 ## 1. Build the cluster
 
 ```bash
@@ -11,8 +15,7 @@ make aws-plan
 ```
 
 That first creates a small stack holding the IAM role CloudFormation will assume, then
-produces a change set for the real stack and prints it. Read it. Nothing has been built
-yet. When you are happy:
+produces a change set for the real stack and prints it. Read it and when you are happy:
 
 ```bash
 make aws-apply
@@ -60,8 +63,7 @@ is HTTP and 9000 is the native protocol. Writes can go to either replica; the ta
 replicates both ways.
 
 From outside the cluster, there is nothing. No load balancer and no public endpoint are
-created, on purpose. `kubectl port-forward` is how you reach it from your desk, and
-whatever you put in front of it for real traffic is yours to add.
+created. `kubectl port-forward` is how you reach it from your machine.
 
 ## Looking around
 
@@ -98,8 +100,7 @@ kubectl exec -n clickhouse clickhouse-0 -- clickhouse-client -q \
 make schema
 ```
 
-The new table on `clickhouse-1` then fetches everything from `clickhouse-0`. This is the
-cost of the node-local storage choice and `README.md` in this directory says more about it.
+The new table on `clickhouse-1` then fetches everything from `clickhouse-0`.
 
 ## Tearing it down
 
