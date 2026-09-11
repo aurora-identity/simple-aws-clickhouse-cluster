@@ -1,10 +1,10 @@
-# ClickHouse across three availability zones
+# A simple ClickHouse cluster on AWS
 
-A ClickHouse cluster that survives losing a zone: two replicas of every table, a
-three-node ClickHouse Keeper quorum, and hot-to-warm storage tiering, running on
-Kubernetes with each replica and each Keeper pinned to its own availability zone. There
-is one manifest, and it runs unchanged on a local cluster on your laptop and on EKS, so
-what you test locally is what you deploy.
+A ClickHouse cluster on AWS that survives losing an availability zone: two replicas of
+every table, a three-node ClickHouse Keeper quorum, and hot-to-warm storage tiering,
+running on EKS with each replica and each Keeper pinned to its own zone. There is one
+manifest, and it runs unchanged on a local cluster on your laptop and on EKS, so what you
+test locally is what you deploy.
 
 This is the database half of the
 [Aurora Identity risk engine](https://github.com/aurora-identity/risk-engine), pulled out
@@ -170,7 +170,7 @@ rather than a likely outcome.
 ## Getting in touch
 
 Questions, bugs and patches are welcome as
-[issues](https://github.com/aurora-identity/clickhouse-cluster/issues) on this repository.
+[issues](https://github.com/aurora-identity/simple-aws-clickhouse-cluster/issues) on this repository.
 
 If you would like help running this, or adapting it to your own data, we are happy to
 help: https://github.com/georgismitev.
