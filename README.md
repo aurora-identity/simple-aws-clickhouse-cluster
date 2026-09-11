@@ -1,10 +1,10 @@
 # ClickHouse across three availability zones
 
 A ClickHouse cluster that survives losing a zone: two replicas of every table, a
-three-node ClickHouse Keeper quorum, and hot-to-warm storage tiering, running on EKS with
-each replica and each Keeper pinned to its own availability zone. The same five
-containers run on your laptop under docker-compose, with the same configuration files,
-so what you test locally is what you deploy.
+three-node ClickHouse Keeper quorum, and hot-to-warm storage tiering, running on
+Kubernetes with each replica and each Keeper pinned to its own availability zone. There
+is one manifest, and it runs unchanged on a local cluster on your laptop and on EKS, so
+what you test locally is what you deploy.
 
 This is the database half of the
 [Aurora Identity risk engine](https://github.com/aurora-identity/risk-engine), pulled out
@@ -35,74 +35,82 @@ above. It is there to be replaced.
 
 ## How the pieces fit
 
-`config/` holds the ClickHouse and Keeper configuration, and there is only one copy of it.
-Every hostname in those files is read from an environment variable, so under docker-compose
-the replicas are called `clickhouse-0` and `clickhouse-1` and on Kubernetes they are
-`clickhouse-0.clickhouse.clickhouse.svc.cluster.local` and so on, with the XML unchanged.
-A server refuses to start if one of those variables is missing, which is better than
-starting with the wrong neighbours.
+`kubernetes/clickhouse.yaml` is the cluster: two StatefulSets, their headless Services,
+and the storage they use. Each pod is pinned to a node labelled for it, `role=clickhouse`
+or `role=keeper`, and an anti-affinity rule on the zone label keeps two replicas out of
+the same zone and two Keepers likewise. Those labels are the whole contract between the
+manifest and the cluster underneath it. On AWS, CloudFormation puts them on the nodes. On
+your laptop, `kubernetes/kind.yaml` does.
+
+`config/` holds the ClickHouse and Keeper configuration, and `make deploy` turns it into
+ConfigMaps. Every hostname in those files is read from an environment variable that the
+manifest sets, so the XML never mentions a cluster-specific name.
 
 `schema/` holds numbered SQL files and `apply.sh`, which runs them in order against one
 replica. The statements say `ON CLUSTER main`, so ClickHouse itself carries them to the
-other replica through Keeper; you apply the schema once, not once per server. Under
-docker-compose a one-shot `schema` container does this after both replicas answer. On
-Kubernetes a Job does the same.
+other replica through Keeper; you apply the schema once, not once per server.
+`make schema` runs it as a Job.
 
 `tests/test-cluster.sh` is the proof. It writes a row to replica 0 and waits for it on
 replica 1, then the other way round, and checks that both replicas hold a Keeper session
 and report the table as writable with two of two replicas active. It needs only `curl`.
+`make test` runs it over two port-forwards, which is the same whether the cluster is on
+your laptop or in AWS.
 
-`aws/` is the deployment: CloudFormation for the network, the EKS cluster and the two node
-groups, a Kubernetes manifest for the two StatefulSets, a Makefile that ties the steps
-together, and `deploy.md` as the walkthrough.
+`aws/` is the part that exists only for AWS: CloudFormation for the network, the EKS
+cluster and the two node groups, and `deploy.md` as the walkthrough.
+
+The `Makefile` at the root ties it together. `make deploy`, `make schema` and `make test`
+act on whatever cluster `kubectl` currently points at. `make local-up` and `make aws-kube`
+are the two things that point it.
 
 ## Running it locally
 
-You need Docker.
+You need Docker, `kubectl` and [kind](https://kind.sigs.k8s.io/), which runs a Kubernetes
+cluster as a set of Docker containers, one per node. That matters here because it means
+the local cluster can have six nodes carrying the same labels EKS gives them, and the
+scheduler spreads the pods exactly as it would in AWS.
 
 ```bash
-docker compose up -d
+make local-up
+make deploy
+make schema
+make test
 ```
 
-That starts three Keepers, two replicas and the schema job, and the schema job exits when
-the table exists on both. Replica 0 is on `localhost:8123` (HTTP) and `9000` (native),
-replica 1 on `8124` and `9001`. Then:
+`local-up` creates the cluster and prints its nodes with their role and zone. `deploy`
+waits for both StatefulSets and lists the pods with the node each landed on. `schema`
+prints the Job's log, in which you should see both replicas. `test` prints ten lines, and
+they should all be green.
+
+To look around, use `kubectl` or `k9s` as you would against any cluster:
 
 ```bash
-tests/test-cluster.sh
+kubectl get pods -n clickhouse -o wide
+kubectl logs -n clickhouse clickhouse-0 -f
+kubectl exec -n clickhouse clickhouse-0 -- clickhouse-client -q "SELECT * FROM system.replicas FORMAT Vertical"
+kubectl exec -n clickhouse keeper-0 -- sh -c 'echo mntr | nc localhost 9181'
 ```
 
-Ten green lines means the cluster is doing what it claims. To see what is going on
-underneath:
+To watch the quorum do its job, take a Keeper away and keep writing:
 
 ```bash
-docker compose exec clickhouse-0 clickhouse-client -q "SELECT * FROM system.replicas FORMAT Vertical"
-docker compose exec clickhouse-0 clickhouse-client -q "SELECT * FROM system.clusters WHERE cluster = 'main'"
-docker compose exec keeper-0 sh -c 'echo mntr | nc localhost 9181'
+kubectl delete pod -n clickhouse keeper-1
+kubectl exec -n clickhouse clickhouse-1 -- clickhouse-client -q "INSERT INTO events (event_time, source, name) VALUES (now64(3), 'me', 'still-writing')"
+kubectl exec -n clickhouse clickhouse-0 -- clickhouse-client -q "SELECT * FROM events WHERE source = 'me'"
 ```
 
-ClickHouse also serves a small SQL console at `http://localhost:8123/play`.
-
-To watch the quorum do its job, stop one Keeper and keep writing:
-
-```bash
-docker compose stop keeper-1
-docker compose exec clickhouse-1 clickhouse-client -q "INSERT INTO events (event_time, source, name) VALUES (now64(3), 'me', 'still-writing')"
-docker compose exec clickhouse-0 clickhouse-client -q "SELECT * FROM events WHERE source = 'me'"
-docker compose start keeper-1
-```
-
-`docker compose down -v` throws the data away; without `-v` it survives.
+The StatefulSet brings `keeper-1` back on its own. `make local-down` deletes the cluster
+and its data.
 
 ## Deploying it to AWS
 
 `aws/deploy.md` is the walkthrough and `aws/README.md` explains the shape of what it
-builds. The short version is `make plan`, `make apply`, `make kube`, `make deploy`,
-`make schema`, `make test`, each from the `aws/` directory. The last one runs the same
-test script over two port-forwards. The images on AWS are the same official ones from
-Docker Hub that docker-compose runs; nothing is built or re-tagged.
+builds. The short version is `make aws-plan`, `make aws-apply`, `make aws-kube`, and then
+the same `make deploy`, `make schema` and `make test` you ran locally. The images are the
+official ones from Docker Hub in both places; nothing is built or re-tagged.
 
-The only account-specific values are the region and a stack name, both in `aws/.env`.
+The only account-specific values are the region and a stack name, both in `.env`.
 
 ## Using it for your own data
 
@@ -111,9 +119,7 @@ A table needs three things to take part in the cluster: `ON CLUSTER main` on the
 `CREATE`, `ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')`
 so that both replicas agree on where in Keeper it lives, and
 `SETTINGS storage_policy = 'hot_warm'` if you want the tiering. The example table shows
-the TTL syntax that moves and then deletes.
-
-Locally, `docker compose up schema` runs anything new. On Kubernetes it is `make schema`.
+the TTL syntax that moves and then deletes. `make schema` runs anything new.
 
 ## Known gaps
 
@@ -154,7 +160,7 @@ rather than a likely outcome.
 
 The original baked the schema into a custom ClickHouse image and ran it from the image's
 init hook. Here the images are the unmodified official ones and the schema is applied by
-a small script, which is the same script in both environments.
+a small script run as a Job.
 
 ## Getting in touch
 

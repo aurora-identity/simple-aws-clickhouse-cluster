@@ -1,0 +1,48 @@
+# A local cluster shaped like the AWS one: two nodes labelled role=clickhouse in two zones
+# and tainted so nothing else lands on them, three nodes labelled role=keeper in three
+# zones. Each node is a Docker container. The zones are pretend, but the scheduler does not
+# know that, so the same anti-affinity rules that spread the pods on EKS spread them here.
+#
+#   kind create cluster --config kubernetes/kind.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: clickhouse
+nodes:
+  - role: control-plane
+
+  - role: worker
+    labels:
+      role: clickhouse
+      topology.kubernetes.io/zone: zone-a
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - { key: dedicated, value: clickhouse, effect: NoSchedule }
+
+  - role: worker
+    labels:
+      role: clickhouse
+      topology.kubernetes.io/zone: zone-b
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - { key: dedicated, value: clickhouse, effect: NoSchedule }
+
+  - role: worker
+    labels:
+      role: keeper
+      topology.kubernetes.io/zone: zone-a
+
+  - role: worker
+    labels:
+      role: keeper
+      topology.kubernetes.io/zone: zone-b
+
+  - role: worker
+    labels:
+      role: keeper
+      topology.kubernetes.io/zone: zone-c

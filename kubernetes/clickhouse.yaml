@@ -1,8 +1,9 @@
 # Two ClickHouse replicas and three Keeper nodes, each pinned to its own availability zone.
+# This one file runs on the local kind cluster and on EKS; nothing in it is specific to
+# either.
 #
-# The config files are not in here. `make deploy` builds three ConfigMaps from the same
-# config/ directory that docker-compose uses, then applies this file. The images are the
-# official ones from Docker Hub, the same tags docker-compose runs.
+# The config files are not in here. `make deploy` builds three ConfigMaps from the config/
+# directory, then applies this file. The images are the official ones from Docker Hub.
 ---
 apiVersion: v1
 kind: Namespace

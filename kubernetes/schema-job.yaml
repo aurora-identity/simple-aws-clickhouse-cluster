@@ -1,9 +1,9 @@
 # Applies schema/*.sql to the cluster, once. `make schema` builds the ConfigMap from the
 # schema/ directory, deletes any previous run of this job, and applies this file.
 #
-# The job runs the same apply.sh that docker-compose runs, against replica 0. The
-# statements are ON CLUSTER, so that reaches both replicas. It retries until the replicas
-# are up, which is why it is safe to run straight after `make deploy`.
+# The job runs schema/apply.sh against replica 0. The statements are ON CLUSTER, so that
+# reaches both replicas. It retries until the replicas are up, which is why it is safe to
+# run straight after `make deploy`.
 apiVersion: batch/v1
 kind: Job
 metadata:

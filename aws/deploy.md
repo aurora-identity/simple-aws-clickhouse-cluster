@@ -1,13 +1,13 @@
 # Deploying to AWS, step by step
 
-Everything here runs from the `aws/` directory. You need the AWS CLI signed in as an
-identity that can create IAM roles, `kubectl`, and Docker. Copy `.env.example` to `.env`
-and fill in your region and account id.
+Everything here runs from the root of the repository. You need the AWS CLI signed in as
+an identity that can create IAM roles, and `kubectl`. Copy `.env.example` to `.env` and
+set your region.
 
 ## 1. Build the cluster
 
 ```bash
-make plan
+make aws-plan
 ```
 
 That first creates a small stack holding the IAM role CloudFormation will assume, then
@@ -15,7 +15,7 @@ produces a change set for the real stack and prints it. Read it. Nothing has bee
 yet. When you are happy:
 
 ```bash
-make apply
+make aws-apply
 ```
 
 This takes ten to fifteen minutes, almost all of it EKS. When it returns you have a VPC,
@@ -26,7 +26,7 @@ images, an EKS cluster, two `m6i.large` nodes labelled `role=clickhouse` and thr
 ## 2. Point kubectl at it
 
 ```bash
-make kube
+make aws-kube
 ```
 
 This assumes the deployment role, because whoever created an EKS cluster is its first
@@ -34,37 +34,23 @@ administrator and the cluster was created by that role. It prints the nodes with
 role and zone, which is the first place to look if something later does not schedule: you
 should see two zones among the ClickHouse nodes and three among the Keeper nodes.
 
-## 3. Deploy ClickHouse
+## 3. Deploy, apply the schema, prove it
+
+From here on it is the same three commands as on your laptop, because `kubectl` now
+points at EKS and nothing in the manifest knows the difference.
 
 ```bash
 make deploy
-```
-
-This builds three ConfigMaps from the `config/` directory at the root of the repository,
-applies `kubernetes/clickhouse.yaml`, and waits for both StatefulSets to roll out. The
-images are `clickhouse/clickhouse-server:25.10` and `clickhouse/clickhouse-keeper:25.10-alpine`
-straight from Docker Hub, the same ones docker-compose runs. The end of the output lists
-the pods with the node each landed on.
-
-## 4. Apply the schema
-
-```bash
 make schema
-```
-
-This builds a ConfigMap from `schema/`, runs `schema/apply.sh` as a Job against replica 0,
-and prints the Job's log. The statements are `ON CLUSTER`, so you will see both replicas
-in the output.
-
-## 5. Prove it
-
-```bash
 make test
 ```
 
-This port-forwards both replicas to your machine and runs `tests/test-cluster.sh`, the
-same script you ran against docker-compose. Ten green lines means a row written to either
-replica arrives on the other and both replicas hold a Keeper session.
+`deploy` builds three ConfigMaps from `config/`, applies `kubernetes/clickhouse.yaml`,
+and waits for both StatefulSets to roll out. `schema` runs `schema/apply.sh` as a Job
+against replica 0 and prints its log; the statements are `ON CLUSTER`, so you will see
+both replicas in it. `test` port-forwards both replicas and runs `tests/test-cluster.sh`;
+ten green lines means a row written to either replica arrives on the other and both
+replicas hold a Keeper session.
 
 ## Reaching it from your application
 
@@ -118,7 +104,7 @@ cost of the node-local storage choice and `README.md` in this directory says mor
 ## Tearing it down
 
 ```bash
-make destroy
+make aws-destroy
 ```
 
 Kubernetes resources go first, then the stack, then the bootstrap role. The data on the

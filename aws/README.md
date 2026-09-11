@@ -1,17 +1,18 @@
 # The AWS deployment
 
-This directory holds the CloudFormation for the cluster and its networking, the
-Kubernetes manifests for ClickHouse, and `deploy.md` as the step-by-step. Read `deploy.md`
-to do it; this file describes the shape of what you end up with.
+This directory holds the CloudFormation for the cluster and its networking, and
+`deploy.md` as the step-by-step. The Kubernetes manifest is not here, because it is not
+AWS-specific; it is in `kubernetes/` at the root and runs unchanged on kind. Read
+`deploy.md` to do it; this file describes the shape of what you end up with.
 
 ## What gets built
 
 CloudFormation creates a VPC with three private subnets, one per availability zone, and
 an EKS cluster whose nodes live in them. The nodes have no public addresses. One small
 public subnet holds a NAT gateway, and that is the nodes' only route out; they use it to
-join the cluster and to pull the official ClickHouse images from Docker Hub, the same
-tags docker-compose runs. The NAT gateway sits in one zone, so if that zone goes down the
-nodes elsewhere cannot pull an image until it is back. A running cluster does not notice,
+join the cluster and to pull the official ClickHouse images from Docker Hub. The NAT
+gateway sits in one zone, so if that zone goes down the nodes elsewhere cannot pull an
+image until it is back. A running cluster does not notice,
 because the images are already on the nodes; a pod that has to start on a fresh node
 during that window would wait.
 
@@ -24,19 +25,17 @@ Kubernetes then runs two StatefulSets in the `clickhouse` namespace. `clickhouse
 shard with two replicas, and `keeper` is three nodes, the smallest number that holds a
 quorum. Both carry a pod anti-affinity rule on the zone, so two replicas can never share a
 zone and neither can two Keepers. If the node group did not manage to spread across
-zones, the pod stays Pending rather than quietly landing next to its twin; `make kube`
-prints the zones so you can see this before it bites.
+zones, the pod stays Pending rather than quietly landing next to its twin;
+`make aws-kube` prints the zones so you can see this before it bites.
 
 The configuration the pods read is the `config/` directory at the root of this
-repository, turned into ConfigMaps by `make deploy`. The same files run under
-docker-compose. The only thing that differs between the two is the hostnames, and those
-are environment variables set in the manifest.
+repository, turned into ConfigMaps by `make deploy`, exactly as on the local cluster.
 
 ## Storage and retention
 
 Storage is deliberately not dynamic. The `node-local` StorageClass has no provisioner, and
-the PersistentVolumes in `kubernetes/clickhouse.yaml` are declared by hand: a `hostPath`
-on each node, pinned to nodes with the right `role` label. A ClickHouse pod mounts
+the PersistentVolumes in `kubernetes/clickhouse.yaml` at the root are declared by hand: a
+`hostPath` on each node, pinned to nodes with the right `role` label. A ClickHouse pod mounts
 `/var/lib/clickhouse` for hot data and metadata, and `/var/lib/clickhouse-warm` for warm
 data. Both directories are on the node's single EBS root volume, so on this deployment the
 warm tier shows the mechanism rather than saving money. Attaching a cheaper second volume
